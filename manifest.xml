@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+  
+  <Id>a7b3c9d2-4e6f-4a2b-9c1d-8f5e2a7b6c4d</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Vignesh Kumar Ponnambalam</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Scormly" />
+  <Description DefaultValue="Convert PowerPoint presentations into SCORM 1.2 or 2004 packages. Runs fully offline." />
+  <IconUrl DefaultValue="https://mithravk9589.github.io/scorm-addin/icons/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://mithravk9589.github.io/scorm-addin/icons/icon-64.png" />
+  <SupportUrl DefaultValue="https://github.com/mithravk9589/scorm-addin" />
+  
+  <Hosts>
+    <Host Name="Presentation" />
+  </Hosts>
+  
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://mithravk9589.github.io/scorm-addin/taskpane.html" />
+  </DefaultSettings>
+  
+  <Permissions>ReadWriteDocument</Permissions>
+  
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Presentation">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="ScormlyGroup">
+                <Label resid="groupLabel" />
+                <Icon>
+                  <bt:Image size="16" resource="icon16" />
+                  <bt:Image size="32" resource="icon32" />
+                  <bt:Image size="80" resource="icon80" />
+                </Icon>
+                <Control xsi:type="Button" id="ExportScormButton">
+                  <Label resid="buttonLabel" />
+                  <Supertip>
+                    <Title resid="buttonTitle" />
+                    <Description resid="buttonDesc" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resource="icon16" />
+                    <bt:Image size="32" resource="icon32" />
+                    <bt:Image size="80" resource="icon80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>ScormlyTaskpane</TaskpaneId>
+                    <SourceLocation resid="taskpaneUrl" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    
+    <Resources>
+      <bt:Images>
+        <bt:Image id="icon16" DefaultValue="https://mithravk9589.github.io/scorm-addin/icons/icon-16.png" />
+        <bt:Image id="icon32" DefaultValue="https://mithravk9589.github.io/scorm-addin/icons/icon-32.png" />
+        <bt:Image id="icon80" DefaultValue="https://mithravk9589.github.io/scorm-addin/icons/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="taskpaneUrl" DefaultValue="https://mithravk9589.github.io/scorm-addin/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="groupLabel" DefaultValue="Scormly" />
+        <bt:String id="buttonLabel" DefaultValue="Export as SCORM" />
+        <bt:String id="buttonTitle" DefaultValue="Export as SCORM" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="buttonDesc" DefaultValue="Convert this presentation to a SCORM package for your LMS" />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
