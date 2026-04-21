@@ -153,7 +153,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13
   .pb{padding:14px 18px}
 }
 </style>
-  <!-- Office.js SDK loaded from Microsoft's CDN (required for add-ins) -->
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <style>
     body { font-size: 13px; }
@@ -993,35 +992,54 @@ function _parsePptxSlide(zip, slidePath, canvas) {
     }
 
     // Extract fill color (solidFill) from a shape
+    // Helper: convert hex + optional alpha-node to CSS color
+    function resolveColor(colorEl) {
+      if (!colorEl) return null;
+      var hex = null;
+      if (colorEl.localName === 'srgbClr') {
+        hex = colorEl.getAttribute('val');
+      } else if (colorEl.localName === 'schemeClr') {
+        var s = colorEl.getAttribute('val');
+        var map = {bg1:'ffffff', tx1:'000000', bg2:'eeece1', tx2:'1f497d',
+                   accent1:'4f81bd', accent2:'c0504d', accent3:'9bbb59',
+                   accent4:'8064a2', accent5:'4bacc6', accent6:'f79646',
+                   dk1:'000000', lt1:'ffffff', dk2:'1f497d', lt2:'eeece1'};
+        if (map[s]) {
+          hex = map[s];
+          // Apply lumOff modifier
+          var lumOff = findLocal(colorEl, 'lumOff');
+          if (lumOff && parseInt(lumOff.getAttribute('val'),10) >= 80000) {
+            hex = _blendToWhite('#' + hex, 0.8).replace('#','');
+          }
+        }
+      }
+      if (!hex) return null;
+      // Check for <a:alpha val="N">  (N = 0..100000, 100000 = opaque)
+      var alphaEl = findLocal(colorEl, 'alpha');
+      if (alphaEl) {
+        var alphaVal = parseInt(alphaEl.getAttribute('val'), 10);
+        if (!isNaN(alphaVal) && alphaVal < 100000) {
+          var a = (alphaVal / 100000).toFixed(3);
+          var r = parseInt(hex.substr(0,2),16);
+          var g = parseInt(hex.substr(2,2),16);
+          var b = parseInt(hex.substr(4,2),16);
+          return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+        }
+      }
+      return '#' + hex;
+    }
+
     function getFill(spOrPic) {
       var spPr = findLocal(spOrPic, 'spPr');
       if (!spPr) return null;
-      // Direct noFill?
       var noFill = findLocal(spPr, 'noFill');
       if (noFill) return null;
       var solid = findLocal(spPr, 'solidFill');
       if (solid) {
         var srgb = findLocal(solid, 'srgbClr');
-        if (srgb) return '#' + srgb.getAttribute('val');
+        if (srgb) return resolveColor(srgb);
         var scheme = findLocal(solid, 'schemeClr');
-        if (scheme) {
-          // Simplified: map common scheme colors
-          var s = scheme.getAttribute('val');
-          var map = {bg1:'#ffffff', tx1:'#000000', bg2:'#eeece1', tx2:'#1f497d',
-                     accent1:'#4f81bd', accent2:'#c0504d', accent3:'#9bbb59',
-                     accent4:'#8064a2', accent5:'#4bacc6', accent6:'#f79646',
-                     dk1:'#000000', lt1:'#ffffff', dk2:'#1f497d', lt2:'#eeece1'};
-          if (map[s]) {
-            // Check for luminance modifier
-            var lumMod = findLocal(scheme, 'lumMod');
-            var lumOff = findLocal(scheme, 'lumOff');
-            if (lumOff && parseInt(lumOff.getAttribute('val'),10) >= 80000) {
-              // Approximate pastel version — blend toward white
-              return _blendToWhite(map[s], 0.8);
-            }
-            return map[s];
-          }
-        }
+        if (scheme) return resolveColor(scheme);
       }
       return null;
     }
@@ -1032,14 +1050,51 @@ function _parsePptxSlide(zip, slidePath, canvas) {
       if (!spPr) return null;
       var ln = findLocal(spPr, 'ln');
       if (!ln) return null;
+      // Empty <a:ln/> means "no border defined here" (could inherit from theme)
+      // but more commonly just means default. We treat it as no border.
+      if (!ln.hasChildNodes() && !ln.getAttribute('w')) return null;
       var w = ln.getAttribute('w');
       var widthPx = w ? Math.max(1, Math.round(parseInt(w,10) / 9525)) : 1;
       var ls = findLocal(ln, 'solidFill');
       if (ls) {
-        var sr = findLocal(ls, 'srgbClr');
-        if (sr) return widthPx + 'px solid #' + sr.getAttribute('val');
+        var sr = findLocal(ls, 'srgbClr') || findLocal(ls, 'schemeClr');
+        if (sr) {
+          var color = resolveColor(sr);
+          if (color) return widthPx + 'px solid ' + color;
+        }
       }
       return null;
+    }
+
+    // Drop shadow — converts <a:effectLst><a:outerShdw> to CSS box-shadow
+    function getShadow(spOrPic) {
+      var spPr = findLocal(spOrPic, 'spPr');
+      if (!spPr) return null;
+      var effectLst = findLocal(spPr, 'effectLst');
+      if (!effectLst) return null;
+      var outerShdw = findLocal(effectLst, 'outerShdw');
+      if (!outerShdw) return null;
+      var blurRad = parseInt(outerShdw.getAttribute('blurRad') || '0', 10);
+      var dist    = parseInt(outerShdw.getAttribute('dist') || '0', 10);
+      var dir     = parseInt(outerShdw.getAttribute('dir') || '0', 10);
+      // Convert EMU to px
+      var blurPx = Math.round(blurRad / 9525);
+      var distPx = Math.round(dist / 9525);
+      // PPTX direction is in 60000ths of degrees, 0 = right, clockwise.
+      // So dir/60000 gives degrees. Convert to radians for Math.cos/sin.
+      // PPTX convention: dir = angle FROM shape (light source). 
+      // Offset goes AWAY from source, so x = cos(dir)*dist, y = sin(dir)*dist
+      var deg = (dir / 60000);
+      var rad = deg * Math.PI / 180;
+      var xOff = Math.round(Math.cos(rad) * distPx);
+      var yOff = Math.round(Math.sin(rad) * distPx);
+      // Color — default black
+      var srgb = findLocal(outerShdw, 'srgbClr');
+      var color = srgb ? resolveColor(srgb) : 'rgba(0,0,0,.35)';
+      // If the color has no alpha but outerShdw has its own context,
+      // resolveColor handles <a:alpha> inside srgb. Default 35% if still solid black.
+      if (color === '#000000') color = 'rgba(0,0,0,.35)';
+      return xOff + 'px ' + yOff + 'px ' + blurPx + 'px ' + color;
     }
 
     // Preset geometry — maps to CSS border-radius / shape
@@ -1271,10 +1326,14 @@ function _parsePptxSlide(zip, slidePath, canvas) {
           if (!wrap) paraStyle += ';white-space:nowrap';
           var paraHtml = '<p style="' + paraStyle + '">';
           if (isBullet && resolvedBuChar) {
-            // Inline bullet span — sits at the hanging-indent position via text-indent
-            // Use proper bullet font, inherit font-size from containing element for proportionality
-            var bufStyle = "font-family:'" + resolvedBuFont.replace(/'/g, '') + "',sans-serif;display:inline-block;width:" + Math.abs(indentPx || 36) + "px;text-align:left";
-            paraHtml += '<span style="' + bufStyle + '">' + _escXml(resolvedBuChar) + '</span>';
+            // Render bullet as plain inline text followed by a tab-width spacer.
+            // Using display:inline-block with fixed width + negative text-indent
+            // causes the bullet to be pushed off-screen in some browsers (Chromium/WebKit).
+            // Plain inline text works reliably with padding-left + text-indent hanging indent.
+            var bufStyle = "font-family:'" + resolvedBuFont.replace(/'/g, '') + "',sans-serif";
+            // Spacing between bullet and text: use a tab character or multiple non-breaking spaces
+            var bulletChar = _escXml(resolvedBuChar) + '\u00A0\u00A0';   // bullet + two NBSPs
+            paraHtml += '<span style="' + bufStyle + '">' + bulletChar + '</span>';
           }
           paraHtml += runsHtml + '</p>';
           html += paraHtml;
@@ -1454,13 +1513,16 @@ function _parsePptxSlide(zip, slidePath, canvas) {
         var fill = getFill(s);
         var border = getBorder(s);
         var shapeCss = getShapeCss(s);
+        var shadow = getShadow(s);
         var textInfo = getTextHtml(s);
         var pad = textInfo.pad || {l:7, t:3, r:7, b:3};
-        var boxOverflow = textInfo.wrap ? 'hidden' : 'visible';
+        // Shapes with shadows need overflow:visible for the shadow to show
+        var boxOverflow = (textInfo.wrap && !shadow) ? 'hidden' : 'visible';
         var style = 'position:absolute;left:' + geom.x + 'px;top:' + geom.y + 'px;width:' + geom.w + 'px;height:' + geom.h + 'px;box-sizing:border-box;overflow:' + boxOverflow;
         if (fill) style += ';background:' + fill;
         if (border) style += ';border:' + border;
         if (shapeCss) style += ';' + shapeCss;
+        if (shadow) style += ';box-shadow:' + shadow;
         if (geom.rot) style += ';transform:rotate(' + geom.rot + 'deg);transform-origin:center';
         var anchor = textInfo.anchor;
         var anchorJustify = anchor === 'ctr' ? 'center' : (anchor === 'b' ? 'flex-end' : 'flex-start');
@@ -1477,8 +1539,27 @@ function _parsePptxSlide(zip, slidePath, canvas) {
       var canvasW = canvas.w || 1280;
       var canvasH = canvas.h || 720;
       var aspectPct = (canvasH / canvasW * 100).toFixed(4);
-      var bodyHtml = '<div class="pptx-slide-wrap" style="position:relative;width:100%;max-width:' + canvasW + 'px;margin:0 auto;aspect-ratio:' + canvasW + '/' + canvasH + ';overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);border-radius:4px">' +
-        '<div class="pptx-slide-canvas" style="position:absolute;left:0;top:0;width:' + canvasW + 'px;height:' + canvasH + 'px;transform-origin:top left">' +
+      // Read slide background (<p:bg>) and apply to the slide wrapper
+      var slideBg = '#fff';   // default
+      var bgNode = null;
+      var csldKids = slideDoc.documentElement.getElementsByTagName('*');
+      for (var bi = 0; bi < csldKids.length; bi++) {
+        if (csldKids[bi].localName === 'bg') { bgNode = csldKids[bi]; break; }
+      }
+      if (bgNode) {
+        var bgPr = findLocal(bgNode, 'bgPr');
+        if (bgPr) {
+          var solidFill = findLocal(bgPr, 'solidFill');
+          if (solidFill) {
+            var srgb = findLocal(solidFill, 'srgbClr');
+            var sch  = findLocal(solidFill, 'schemeClr');
+            var resolved = srgb ? resolveColor(srgb) : (sch ? resolveColor(sch) : null);
+            if (resolved) slideBg = resolved;
+          }
+        }
+      }
+      var bodyHtml = '<div class="pptx-slide-wrap" style="position:relative;width:100%;max-width:' + canvasW + 'px;margin:0 auto;aspect-ratio:' + canvasW + '/' + canvasH + ';overflow:hidden;background:' + slideBg + ';box-shadow:0 1px 3px rgba(0,0,0,.08);border-radius:4px">' +
+        '<div class="pptx-slide-canvas" style="position:absolute;left:0;top:0;width:' + canvasW + 'px;height:' + canvasH + 'px;transform-origin:top left;background:' + slideBg + '">' +
         innerHtml +
         '</div></div>' +
         '<scr' + 'ipt>(function(){var wr=document.currentScript.previousElementSibling;if(!wr)return;var cv=wr.querySelector(".pptx-slide-canvas");function scale(){var s=wr.clientWidth/' + canvasW + ';cv.style.transform="scale("+s+")";wr.style.height=(s*' + canvasH + ')+"px";}scale();window.addEventListener("resize",scale);setTimeout(function(){var vids=cv.querySelectorAll(".vid-shape");vids.forEach(function(v){if(!v.classList.contains("vid-loaded")){}});},4000);})();<\/script>';
@@ -3347,7 +3428,6 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
 
 <script>
-/* Office Add-in integration — bridges PowerPoint API to generator's PPTX parser */
 (function() {
   var statusEl = null, btnEl = null;
   function setStatus(msg, kind) {
@@ -3368,23 +3448,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         setStatus("✓ Connected to PowerPoint — click to import slides", "ready");
         setBtn(true);
       } else {
-        setStatus("⚠ This add-in is for PowerPoint only. Host: " + (info.host || "unknown"), "error");
+        setStatus("⚠ This add-in is for PowerPoint only.", "error");
       }
     });
   } else {
-    setStatus("⚠ Office.js failed to load. Open this page from inside PowerPoint.", "error");
+    setStatus("⚠ Office.js failed to load. Open this from inside PowerPoint.", "error");
   }
   window.importFromPowerPoint = function() {
     setStatus("Reading presentation bytes…", "");
     setBtn(false, "Reading…");
     if (typeof Office === "undefined" || !Office.context || !Office.context.document) {
-      setStatus("⚠ Office context not available. Open this add-in from inside PowerPoint.", "error");
+      setStatus("⚠ Office context not available.", "error");
       setBtn(true, "Import from current presentation");
       return;
     }
     Office.context.document.getFileAsync(Office.FileType.Compressed, {sliceSize: 4194304}, function(fileResult) {
       if (fileResult.status !== Office.AsyncResultStatus.Succeeded) {
-        setStatus("⚠ Could not read the file: " + (fileResult.error && fileResult.error.message || "unknown error"), "error");
+        setStatus("⚠ Could not read file: " + (fileResult.error && fileResult.error.message || "unknown"), "error");
         setBtn(true, "Import from current presentation");
         return;
       }
@@ -3396,7 +3476,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         file.getSliceAsync(i, function(sliceResult) {
           if (sliceResult.status !== Office.AsyncResultStatus.Succeeded) {
             file.closeAsync();
-            setStatus("⚠ Error reading slice " + i + ": " + (sliceResult.error && sliceResult.error.message), "error");
+            setStatus("⚠ Error reading slice " + i, "error");
             setBtn(true, "Import from current presentation");
             return;
           }
@@ -3421,7 +3501,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   function processPptxBytes(arrayBuffer) {
     setStatus("Parsing slides…", "");
     if (typeof JSZip === "undefined") {
-      setStatus("⚠ JSZip not loaded. Add-in is broken.", "error");
+      setStatus("⚠ JSZip not loaded.", "error");
       setBtn(true, "Import from current presentation");
       return;
     }
@@ -3429,7 +3509,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return _parsePptxZip(zip, "presentation.pptx");
     }).then(function(slides) {
       if (!slides || !slides.length) {
-        setStatus("⚠ No slides were parsed. Is this a valid PPTX?", "error");
+        setStatus("⚠ No slides were parsed.", "error");
         setBtn(true, "Retry");
         return;
       }
@@ -3450,7 +3530,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (typeof renderScoManager === "function") renderScoManager();
       var scoNav = document.getElementById("nav-scos");
       if (scoNav) scoNav.classList.add("done");
-      setStatus("✓ Imported " + slides.length + " slide(s). Configure and click Build & Download.", "ready");
+      setStatus("✓ Imported " + slides.length + " slide(s). Configure and build.", "ready");
       setBtn(true, "Re-import slides");
       if (typeof show === "function") show("scos");
     }).catch(function(err) {
